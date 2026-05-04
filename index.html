@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Corrida de Emoticons - Carro Azul vs Trânsito</title>
+    <style>
+        * {
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background: linear-gradient(145deg, #0a2f1f 0%, #071e12 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Segoe UI', 'Courier New', monospace, 'Apple Color Emoji', 'Segoe UI Emoji';
+            margin: 0;
+            padding: 20px;
+        }
+
+        .game-container {
+            background: #1a2a1f;
+            border-radius: 48px;
+            padding: 20px 20px 25px;
+            box-shadow: 0 20px 35px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1);
+            border: 1px solid #ffd966;
+        }
+
+        canvas {
+            display: block;
+            margin: 0 auto;
+            border-radius: 20px;
+            box-shadow: 0 0 0 8px #2c2e1e, 0 12px 28px black;
+            cursor: pointer;
+            background-color: #2a2418;
+        }
+
+        .info-panel {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 20px;
+            gap: 15px;
+            flex-wrap: wrap;
+            background: #0e1610cc;
+            backdrop-filter: blur(6px);
+            padding: 12px 20px;
+            border-radius: 60px;
+            border: 1px solid #ffd966aa;
+        }
+
+        .score-box {
+            background: #010101bb;
+            padding: 6px 18px;
+            border-radius: 40px;
+            font-weight: bold;
+            font-size: 1.7rem;
+            color: #f5f9c6;
+            text-shadow: 0 2px 0 #3f6b2f;
+            font-family: monospace;
+            letter-spacing: 2px;
+        }
+
+        .score-box span {
+            font-size: 2rem;
+            color: #ffd966;
+        }
+
+        .controls {
+            display: flex;
+            gap: 18px;
+            background: #00000066;
+            padding: 6px 18px;
+            border-radius: 50px;
+        }
+
+        button {
+            background: #2b2a1f;
+            border: none;
+            font-size: 2.2rem;
+            padding: 5px 20px;
+            border-radius: 40px;
+            cursor: pointer;
+            transition: all 0.1s ease;
+            box-shadow: 0 4px 0 #3e3a2a;
+            color: white;
+            font-weight: bold;
+            font-family: monospace;
+        }
+
+        button:active {
+            transform: translateY(3px);
+            box-shadow: 0 1px 0 #3e3a2a;
+        }
+
+        .restart-btn {
+            background: #c07a2e;
+            font-size: 1.3rem;
+            padding: 6px 24px;
+            letter-spacing: 2px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .status {
+            background: #020c02;
+            padding: 5px 20px;
+            border-radius: 32px;
+            font-size: 1.3rem;
+            font-weight: bold;
+            color: #f3c26b;
+            font-family: monospace;
+        }
+
+        .instruction {
+            background: #1f2b14;
+            font-size: 0.85rem;
+            padding: 6px 15px;
+            border-radius: 50px;
+            color: #bebe8a;
+        }
+
+        @media (max-width: 550px) {
+            .info-panel {
+                justify-content: center;
+            }
+            button {
+                font-size: 1.7rem;
+                padding: 3px 16px;
+            }
+            .score-box {
+                font-size: 1.3rem;
+            }
+        }
+    </style>
+</head>
+<body>
+<div>
+    <div class="game-container">
+        <canvas id="gameCanvas" width="500" height="600"></canvas>
+        <div class="info-panel">
+            <div class="score-box">🏆 PONTOS <span id="scoreValue">0</span></div>
+            <div class="controls">
+                <button id="leftBtn">◀ ESQ</button>
+                <button id="rightBtn">DIR ▶</button>
+            </div>
+            <button id="restartBtn" class="restart-btn">🔄 REINICIAR</button>
+            <div class="status" id="gameStatusText">🏁 CORRENDO</div>
+        </div>
+        <div class="instruction">⚡ SETAS ESQUERDA/DIREITA ou clique nos botões | 🚙 Desvie dos veículos inimigos (🚗 🚕 🚛 🚌)</div>
+    </div>
+</div>
+
+<script>
+    (function(){
+        // ----- CONFIGURAÇÕES DO JOGO -----
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Dimensões da estrada
+        const LANE_COUNT = 3;
+        const LANE_WIDTH = canvas.width / LANE_COUNT; // ~166.66
+        const CAR_WIDTH = 55;
+        const CAR_HEIGHT = 65;
+        
+        // carro principal (AZUL) - posição inicial na faixa do meio (índice 1)
+        let playerLane = 1;      // 0 = esquerda, 1 = meio, 2 = direita
+        let playerX = (playerLane * LANE_WIDTH) + (LANE_WIDTH/2) - CAR_WIDTH/2;
+        const playerBaseY = canvas.height - 90;
+        
+        // Arrays dos obstáculos (trânsito)
+        let obstacles = [];
+        
+        // Pontuação / jogo ativo
+        let score = 0;
+        let gameRunning = true;
+        let frameRequest;
+        
+        // Controle de spawn (trânsito)
+        let frameCounter = 0;
+        let baseSpawnDelay = 45;   // frames entre spawns (diminui com score)
+        let currentSpawnDelay = baseSpawnDelay;
+        
+        // Velocidade base dos veículos (movem para baixo)
+        let baseSpeed = 4.2;
+        let currentSpeed = baseSpeed;
+        
+        // lista de emoticons para os veículos adversários (trânsito variado)
+        const opponentEmojis = ["🚗", "🚕", "🚙", "🚌", "🚛", "🚜", "🏎️", "🚓", "🚑", "🚒"];
+        
+        // função para dar um "reset" nos parâmetros
+        function resetGame() {
+            gameRunning = true;
+            score = 0;
+            updateScoreUI();
+            obstacles = [];
+            playerLane = 1;
+            updatePlayerXFromLane();
+            frameCounter = 0;
+            currentSpeed = baseSpeed;
+            currentSpawnDelay = baseSpawnDelay;
+            document.getElementById('gameStatusText').innerHTML = "🏁 CORRENDO";
+            document.getElementById('gameStatusText').style.color = "#f3c26b";
+        }
+        
+        // atualiza posição X do carro principal baseado na pista
+        function updatePlayerXFromLane() {
+            playerX = (playerLane * LANE_WIDTH) + (LANE_WIDTH/2) - CAR_WIDTH/2;
+            // garante limites extras (segurança)
+            playerX = Math.min(Math.max(playerX, 5), canvas.width - CAR_WIDTH - 5);
+        }
+        
+        // movimentação segura
+        function movePlayer(deltaLane) {
+            if (!gameRunning) return;
+            let newLane = playerLane + deltaLane;
+            if (newLane >= 0 && newLane < LANE_COUNT) {
+                playerLane = newLane;
+                updatePlayerXFromLane();
+            }
+        }
+        
+        // criar novo veículo inimigo (emoticon)
+        function spawnObstacle() {
+            const laneIndex = Math.floor(Math.random() * LANE_COUNT);
+            // coordenada X centralizado na pista escolhida
+            const obstacleX = (laneIndex * LANE_WIDTH) + (LANE_WIDTH/2) - CAR_WIDTH/2;
+            // seleciona um emoticon aleatório da lista
+            const randomEmoji = opponentEmojis[Math.floor(Math.random() * opponentEmojis.length)];
+            // cores de fundo variadas para destacar os adversários
+            const colors = ["#c0392b", "#d45c2c", "#b85c1a", "#9b6a3c", "#2c6e3c", "#3a5e8c"];
+            const bgColor = colors[Math.floor(Math.random() * colors.length)];
+            obstacles.push({
+                x: obstacleX,
+                y: -CAR_HEIGHT,     // começa fora do topo
+                width: CAR_WIDTH,
+                height: CAR_HEIGHT,
+                emoji: randomEmoji,
+                color: bgColor
+            });
+        }
+        
+        // atualizar lógica: movimentação, colisão, pontuação
+        function updateGame() {
+            if (!gameRunning) return;
+            
+            // 1. Ajuste dinâmico de dificuldade baseado na pontuação
+            // Aumenta velocidade e reduz spawn delay gradualmente (máximo de redução)
+            let difficulty = Math.min(1.0, score / 450);
+            currentSpeed = baseSpeed + (difficulty * 5.2); // max ~9.4
+            // spawn mais rápido: entre 45 e 24 frames
+            let newSpawnDelay = Math.max(24, baseSpawnDelay - Math.floor(difficulty * 27));
+            currentSpawnDelay = newSpawnDelay;
+            
+            // 2. spawn de obstáculos baseado em contador
+            if(frameCounter >= currentSpawnDelay) {
+                spawnObstacle();
+                frameCounter = 0;
+                // pequeno random: pode spawnar duplo raro? não, mas mantem equilibrado
+                // as vezes gera um extra (10% de chance de spawn duplo se jogo intenso)
+                if (Math.random() < 0.12 && score > 30) {
+                    spawnObstacle(); // trânsito pesado
+                }
+            } else {
+                frameCounter++;
+            }
+            
+            // 3. mover todos os obstáculos e remover os que sairam da tela (acima ou abaixo)
+            for(let i = 0; i < obstacles.length; i++) {
+                obstacles[i].y += currentSpeed;
+            }
+            // filtrar obstáculos que passaram do fundo (y > canvas.height) e também aumentar pontuação (passou sem colidir)
+            let newObstacles = [];
+            for(let obs of obstacles) {
+                if(obs.y + obs.height < canvas.height + 50) { // mantém até sumir um pouco abaixo
+                    newObstacles.push(obs);
+                } else {
+                    // veículo saiu da tela sem colidir -> ganha pontos (1 por veículo)
+                    if(gameRunning) {
+                        score += 1;
+                        updateScoreUI();
+                    }
+                }
+            }
+            obstacles = newObstacles;
+            
+            // 4. verificar colisão (retangular simples) entre carro azul e cada adversário
+            const playerRect = {
+                x: playerX,
+                y: playerBaseY,
+                w: CAR_WIDTH,
+                h: CAR_HEIGHT
+            };
+            
+            for(let obs of obstacles) {
+                const obsRect = {
+                    x: obs.x,
+                    y: obs.y,
+                    w: CAR_WIDTH,
+                    h: CAR_HEIGHT
+                };
+                if(playerRect.x < obsRect.x + obsRect.w &&
+                    playerRect.x + playerRect.w > obsRect.x &&
+                    playerRect.y < obsRect.y + obsRect.h &&
+                    playerRect.y + playerRect.h > obsRect.y) {
+                    // COLISÃO! game over
+                    gameRunning = false;
+                    document.getElementById('gameStatusText').innerHTML = "💥 GAME OVER 💥";
+                    document.getElementById('gameStatusText').style.color = "#e67e22";
+                    break;
+                }
+            }
+            
+            // atualizar velocidade na interface visual (apenas feedback)
+            if(gameRunning) {
+                let speedPercent = (currentSpeed / (baseSpeed + 5.5) * 100).toFixed(0);
+                // não precisa mostrar muito, mas podemos alterar cor do status dinâmico
+                if(score > 100) {
+                    document.getElementById('gameStatusText').innerHTML = `🔥 VELOZ | SCORE ${score}`;
+                } else {
+                    document.getElementById('gameStatusText').innerHTML = `🏁 CORRENDO | ${score}pts`;
+                }
+            } else {
+                document.getElementById('gameStatusText').innerHTML = "💀 GAME OVER - APERTE REINICIAR 💀";
+            }
+        }
+        
+        // atualizar elemento HTML do score
+        function updateScoreUI() {
+            document.getElementById('scoreValue').innerText = score;
+        }
+        
+        // ---------- DESENHO DO JOGO (estilo emoticons + trânsito realista) -----------
+        function drawRoad() {
+            // asfalto escuro com linhas
+            ctx.fillStyle = "#26211c";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // faixas de rodagem (listras)
+            ctx.strokeStyle = "#f7d44a";
+            ctx.lineWidth = 5;
+            for(let i=1; i<LANE_COUNT; i++) {
+                let x = i * LANE_WIDTH;
+                ctx.beginPath();
+                ctx.setLineDash([20, 30]);
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            ctx.setLineDash([]);
+            // faixa de borda (laterais)
+            ctx.strokeStyle = "#c9a53b";
+            ctx.lineWidth = 4;
+            ctx.strokeRect(10, 10, canvas.width-20, canvas.height-20);
+            
+            // linha do meio pontilhada horizontal? opcional, mas legal
+            for(let y = 30; y < canvas.height; y += 45) {
+                ctx.beginPath();
+                ctx.fillStyle = "#ffda88";
+                ctx.fillRect(canvas.width/2-8, y, 16, 8);
+            }
+            
+            // efeito de velocidade (pistas)
+            ctx.fillStyle = "#ffffff44";
+            for(let i=0; i<30; i++) {
+                let speedStripX = (i%3) * LANE_WIDTH + 35;
+                let offsetY = (Date.now() * 0.008 + i*17) % 80;
+                ctx.fillRect(speedStripX, canvas.height - offsetY - 60, 6, 25);
+            }
+        }
+        
+        // desenha carro principal (AZUL COM EMOTICON ESPORTIVO)
+        function drawPlayerCar() {
+            // efeito de sombra e brilho
+            ctx.shadowBlur = 12;
+            ctx.shadowColor = "#0af0fc";
+            // corpo arredondado do carro azul emoticon
+            ctx.fillStyle = "#1e88e5";
+            ctx.beginPath();
+            ctx.roundRect(playerX, playerBaseY, CAR_WIDTH, CAR_HEIGHT, 12);
+            ctx.fill();
+            ctx.fillStyle = "#0d47a1";
+            ctx.beginPath();
+            ctx.roundRect(playerX+5, playerBaseY+8, CAR_WIDTH-10, 18, 8);
+            ctx.fill();
+            // janelas
+            ctx.fillStyle = "#90caf9";
+            ctx.fillRect(playerX+8, playerBaseY+28, 12, 15);
+            ctx.fillRect(playerX+35, playerBaseY+28, 12, 15);
+            // roda
+            ctx.fillStyle = "#2d2d2d";
+            ctx.fillRect(playerX+5, playerBaseY+CAR_HEIGHT-12, 12, 10);
+            ctx.fillRect(playerX+CAR_WIDTH-17, playerBaseY+CAR_HEIGHT-12, 12, 10);
+            
+            // EMOTICON GRANDE E VISÍVEL - carro azul divertido
+            ctx.font = `48px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", monospace`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.shadowBlur = 6;
+            ctx.fillStyle = "#ffffff";
+            ctx.fillText("🚙", playerX + CAR_WIDTH/2, playerBaseY + CAR_HEIGHT/2 - 2);
+            // complemento com óculos escuros cool
+            ctx.font = `22px "Segoe UI Emoji"`;
+            ctx.fillStyle = "#ffecb3";
+            ctx.fillText("😎", playerX + CAR_WIDTH/2 + 12, playerBaseY + 28);
+            ctx.font = `28px "Segoe UI Emoji"`;
+            ctx.fillText("💨", playerX + CAR_WIDTH-14, playerBaseY+15);
+            ctx.shadowBlur = 0;
+        }
+        
+        // desenha veículos do trânsito (cada um com emoticon e estilo único)
+        function drawObstacles() {
+            for(let obs of obstacles) {
+                // base do veículo com cor de fundo personalizada
+                ctx.fillStyle = obs.color;
+                ctx.beginPath();
+                ctx.roundRect(obs.x, obs.y, CAR_WIDTH, CAR_HEIGHT, 12);
+                ctx.fill();
+                ctx.fillStyle = "#2c2e2a";
+                ctx.fillRect(obs.x+8, obs.y+8, CAR_WIDTH-16, 14);
+                ctx.fillStyle = "#4f5b62";
+                ctx.fillRect(obs.x+12, obs.y+45, 10, 12);
+                ctx.fillRect(obs.x+CAR_WIDTH-22, obs.y+45, 10, 12);
+                // Emoticon central enorme
+                ctx.font = `44px "Segoe UI Emoji", "Apple Color Emoji"`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = "#fff7e8";
+                ctx.fillText(obs.emoji, obs.x + CAR_WIDTH/2, obs.y + CAR_HEIGHT/2 + 4);
+                // fumaça / perigo
+                ctx.font = `22px emoji`;
+                ctx.fillStyle = "#d1ccc0";
+                ctx.fillText("⚠️", obs.x + CAR_WIDTH-16, obs.y+12);
+            }
+        }
+        
+        // detalhes da estrada e efeitos
+        function drawBackgroundDetails() {
+            // gramado lateral
+            ctx.fillStyle = "#386035";
+            ctx.fillRect(0, 0, 15, canvas.height);
+            ctx.fillRect(canvas.width-15, 0, 15, canvas.height);
+            ctx.fillStyle = "#8bc34a";
+            for(let i=0;i<12;i++) {
+                ctx.fillRect(3, i*55+10, 7, 18);
+                ctx.fillRect(canvas.width-10, i*55+10, 7, 18);
+            }
+        }
+        
+        // exibe mensagem de game over sobre o canvas se necessário
+        function drawGameStatusOverlay() {
+            if(!gameRunning) {
+                ctx.fillStyle = "rgba(0,0,0,0.75)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.font = `bold 34px monospace`;
+                ctx.fillStyle = "#ffae70";
+                ctx.shadowBlur = 0;
+                ctx.textAlign = "center";
+                ctx.fillText("💥 COLISÃO! 💥", canvas.width/2, canvas.height/2 - 40);
+                ctx.font = `22px monospace`;
+                ctx.fillStyle = "#fade85";
+                ctx.fillText("Pressione REINICIAR", canvas.width/2, canvas.height/2 + 40);
+                ctx.font = `18px monospace`;
+                ctx.fillStyle = "#efb87e";
+                ctx.fillText(`Trânsito intenso... Pontuação: ${score}`, canvas.width/2, canvas.height/2 + 100);
+            }
+        }
+        
+        // FUNÇÃO principal de animação (loop)
+        function animate() {
+            if(gameRunning) {
+                updateGame();
+            }
+            // desenho completo
+            drawRoad();
+            drawBackgroundDetails();
+            drawObstacles();
+            drawPlayerCar();
+            drawGameStatusOverlay();
+            
+            // pequenos detalhes: placas informativas
+            ctx.font = `bold 15px monospace`;
+            ctx.fillStyle = "#ffe0a3";
+            ctx.shadowBlur = 2;
+            ctx.fillText("🚦TRÂNSITO PESADO", 20, 30);
+            ctx.fillText(`💨 VEL: ${Math.floor(currentSpeed*10)/10}`, canvas.width-100, 35);
+            ctx.fillStyle = "#e8e2b9";
+            ctx.fillText(`🚙 DESVIE DOS EMOTICONS`, canvas.width/2-110, canvas.height-14);
+            ctx.shadowBlur = 0;
+            
+            frameRequest = requestAnimationFrame(animate);
+        }
+        
+        // -------- CONTROLES : TECLADO E BOTÕES TOUCH --------
+        function handleKeyDown(e) {
+            if (!gameRunning) return;
+            if (e.key === 'ArrowLeft') {
+                movePlayer(-1);
+                e.preventDefault();
+            } else if (e.key === 'ArrowRight') {
+                movePlayer(1);
+                e.preventDefault();
+            }
+        }
+        
+        // evento para evitar scroll com setas
+        window.addEventListener('keydown', function(e) {
+            if(e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                if(!gameRunning) return;
+                e.preventDefault();
+                handleKeyDown(e);
+            }
+        });
+        
+        // botões da interface
+        document.getElementById('leftBtn').addEventListener('click', () => movePlayer(-1));
+        document.getElementById('rightBtn').addEventListener('click', () => movePlayer(1));
+        document.getElementById('restartBtn').addEventListener('click', () => {
+            resetGame();
+            // limpa obstáculos e reseta contadores
+            obstacles = [];
+            frameCounter = 0;
+            currentSpeed = baseSpeed;
+            currentSpawnDelay = baseSpawnDelay;
+            gameRunning = true;
+            updateScoreUI();
+        });
+        
+        // também suporte pra touch em dispositivos móveis (sem plugins)
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touchX = (e.touches[0].clientX - rect.left) * (canvas.width/rect.width);
+            if(touchX < canvas.width/2) movePlayer(-1);
+            else movePlayer(1);
+        });
+        
+        // suporte mouse no canvas (clique esquerdo/direito simulado)
+        canvas.addEventListener('click', (e) => {
+            if(!gameRunning) return;
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (e.clientX - rect.left) * (canvas.width/rect.width);
+            if(clickX < canvas.width/2) movePlayer(-1);
+            else movePlayer(1);
+        });
+        
+        // roundRect utility
+        if (!CanvasRenderingContext2D.prototype.roundRect) {
+            CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+                if (w < 2 * r) r = w / 2;
+                if (h < 2 * r) r = h / 2;
+                this.moveTo(x+r, y);
+                this.lineTo(x+w-r, y);
+                this.quadraticCurveTo(x+w, y, x+w, y+r);
+                this.lineTo(x+w, y+h-r);
+                this.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+                this.lineTo(x+r, y+h);
+                this.quadraticCurveTo(x, y+h, x, y+h-r);
+                this.lineTo(x, y+r);
+                this.quadraticCurveTo(x, y, x+r, y);
+                return this;
+            };
+        }
+        
+        // Inicialização
+        resetGame();
+        animate();
+    })();
+</script>
+</body>
+</html>
